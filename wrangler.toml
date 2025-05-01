@@ -14,4 +14,4 @@ browser = { binding = "MY_BROWSER" }
 rules = [{ type = "Text", globs = ["**/*.html"], fallthrough = true }]
 
 [vars]
-ENVIRONMENT = "development"
+ENVIRONMENT = "production"
