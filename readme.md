@@ -66,10 +66,9 @@ Note that if blocks and lists appear at the same level, the lists will be ignore
 
 ### Blocks
 
-```js
+\`\`\`js
 console.log("hello, JavaScript");
-```
-````
+\`\`\`
 
 | Products | Price |
 | -------- | ----- |
@@ -87,3 +86,4 @@ https://markmap-service.gine.workers.dev/?md=LS0tCnRpdGxlOiBtYXJrbWFwCm1hcmttYXA
 
 https://markmap-service.gine.workers.dev/?output=svg&width=400&height=300&md=IyBIZWxsbyBNYXJrbWFwCgotIEl0ZW0gMQotIEl0ZW0gMgogIC0gU3ViaXRlbSAyLjEKICAtIFN1Yml0ZW0gMi4y
 ```
+````
