@@ -1,10 +1,11 @@
+import { Transformer } from "markmap-lib";
+import { fillTemplate } from "markmap-render";
 import puppeteer, {
   ElementHandle,
   BrowserWorker,
   ActiveSession,
 } from "@cloudflare/puppeteer"; // Import BrowserWorker and ActiveSession
 import { Env } from "."; // Import Env type from index.ts
-import { generateHtml } from "./html-generator";
 
 // Helper function to find a random available session
 async function getRandomAvailableSession(
@@ -40,6 +41,7 @@ export async function generateSvgResponse(
   widthParam: string | null, // Add width parameter
   heightParam: string | null // Add height parameter
 ): Promise<Response> {
+  const transformer = new Transformer(); // Transformer needed only for SVG rendering
   let browser = null; // Define browser outside try block for finally
   let launchedNew = false; // Flag to track if we launched a new browser
   let connectedSessionId: string | null = null;
@@ -87,8 +89,11 @@ export async function generateSvgResponse(
         ? requestedHeight
         : null;
 
+    const { root, features } = transformer.transform(markdown);
+    const assets = transformer.getUsedAssets(features);
     // This HTML is generated specifically for Puppeteer rendering
-    const fullHtml = generateHtml(markdown);
+    const fullHtml = fillTemplate(root, assets);
+
     const page = await browser.newPage();
 
     // Listen for console errors within the page
