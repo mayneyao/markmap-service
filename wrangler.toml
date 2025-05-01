@@ -3,10 +3,15 @@ main = "src/index.ts"
 compatibility_date = "2024-04-05"
 
 # Add nodejs_compat flag
-compatibility_flags = [ "nodejs_compat" ]
+compatibility_flags = ["nodejs_compat"]
 
 # Add this binding (correct syntax):
 browser = { binding = "MY_BROWSER" }
 
 # Ensure you have your account_id set if deploying
 # account_id = "YOUR_ACCOUNT_ID"
+
+rules = [{ type = "Text", globs = ["**/*.html"], fallthrough = true }]
+
+[vars]
+ENVIRONMENT = "development"

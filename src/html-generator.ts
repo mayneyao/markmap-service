@@ -1,15 +1,4 @@
-// Helper function to escape HTML characters
-const escapeHtml = (unsafe: string): string => {
-  return unsafe
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-};
-
 export function generateHtml(markdown: string): string {
-  const escapedMarkdown = escapeHtml(markdown);
   const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
@@ -33,7 +22,7 @@ export function generateHtml(markdown: string): string {
 </head>
 <body>
 <div class="markmap">
-  <script type="text/template">${escapedMarkdown}</script>
+  <script type="text/template">${markdown}</script>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/markmap-autoloader@latest"></script>
 </body>

@@ -1,11 +1,10 @@
-import { Transformer } from "markmap-lib";
-import { fillTemplate } from "markmap-render";
 import puppeteer, {
-  ElementHandle,
-  BrowserWorker,
   ActiveSession,
+  BrowserWorker,
+  ElementHandle,
 } from "@cloudflare/puppeteer"; // Import BrowserWorker and ActiveSession
 import { Env } from "."; // Import Env type from index.ts
+// Remove direct import of html-generator and markmap libs from worker context
 
 // Helper function to find a random available session
 async function getRandomAvailableSession(
@@ -41,10 +40,15 @@ export async function generateSvgResponse(
   widthParam: string | null, // Add width parameter
   heightParam: string | null // Add height parameter
 ): Promise<Response> {
-  const transformer = new Transformer(); // Transformer needed only for SVG rendering
+  console.log("--- Input Markdown ---"); // Log input markdown
+  console.log(markdown);
+  console.log("----------------------");
+
   let browser = null; // Define browser outside try block for finally
   let launchedNew = false; // Flag to track if we launched a new browser
   let connectedSessionId: string | null = null;
+  // Remove Transformer instantiation from worker context
+  // const transformer = new Transformer();
 
   try {
     // --- Browser Session Reuse Logic Start ---
@@ -89,10 +93,18 @@ export async function generateSvgResponse(
         ? requestedHeight
         : null;
 
-    const { root, features } = transformer.transform(markdown);
-    const assets = transformer.getUsedAssets(features);
-    // This HTML is generated specifically for Puppeteer rendering
-    const fullHtml = fillTemplate(root, assets);
+    // Construct HTML to be loaded into Puppeteer, using the autoloader
+    // --- Transformation is moved inside the browser ---
+    // const { root, features } = transformer.transform(markdown);
+
+    // 2. get assets
+    // either get assets required by used features
+    // const assets = transformer.getUsedAssets(features);
+    // const htmlContent = fillTemplate(root, assets);
+    // console.log("--- Generated HTML (for Puppeteer) ---"); // Log generated HTML
+    // // Log only the first 500 chars to avoid huge logs
+    // console.log(htmlContent);
+    // console.log("---------------------------------------");
 
     const page = await browser.newPage();
 
@@ -101,16 +113,74 @@ export async function generateSvgResponse(
       console.error(`Page error: ${err.toString()}`);
     });
 
-    // Using data URI to load local HTML content
-    const dataUri = `data:text/html;base64,${btoa(
-      unescape(encodeURIComponent(fullHtml))
-    )}`; // Ensure correct encoding for btoa
-    await page.goto(dataUri, { waitUntil: "networkidle0" }); // Wait for scripts to load/run
+    const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>Markmap Render</title>
+        <script type="importmap">
+          {
+            "imports": {
+              "markmap-lib": "https://esm.sh/markmap-lib",
+              "markmap-render": "https://esm.sh/markmap-render"
+            }
+          }
+        </script>
+      </head>
+    
+      <body>
+        <div id="output"></div>
+    
+        <script type="module">
+          import { fillTemplate } from "markmap-render";
+          import { Transformer } from "markmap-lib";
+    
+          window.generateMarkmapHtml = (markdown) => {
+            try {
+              const transformer = new Transformer();
+              const { root, features } = transformer.transform(markdown);
+              const html = fillTemplate(root, features, {
+                jsonOptions: {
+                  duration: 0,
+                },
+              });
+              return html;
+            } catch (error) {
+              console.error("Error generating Markmap:", error);
+              return null;
+            }
+          };
+    
+          window.markmapReady = true;
+        </script>
+      </body>
+    </html>
+    
+    `;
+    await page.setContent(htmlContent, { waitUntil: "load" }); // Make sure scripts run
+    await page.waitForFunction("window.markmapReady === true");
+    const generatedHtml = await page.evaluate((markdown) => {
+      // This code runs inside the browser context
+      return (window as any).generateMarkmapHtml(markdown);
+    }, markdown);
 
-    // Wait specifically for the container element to be ready
+    console.log("--- Generated HTML ---");
+    console.log(generatedHtml);
+    console.log("---------------------------------------");
+
+    // use another page to get the svg
+    const svgPage = await browser.newPage();
+    await svgPage.setContent(generatedHtml, { waitUntil: "networkidle0" });
+
+    // return new Response(generatedHtml, {
+    //   headers: { "Content-Type": "text/html" },
+    // });
+    // <svg id="mindmap"></svg>
+
     console.log("Waiting for selector #mindmap..."); // Wait for the container
-    const elementHandle = await page.waitForSelector("#mindmap svg, #mindmap", {
-      // Wait for SVG child or container itself
+    const elementHandle = await svgPage.waitForSelector("svg#mindmap", {
+      visible: true, // Explicitly wait for the element to be visible
       timeout: 20000, // Increased timeout to 20 seconds
     });
     console.log("Selector found!");
@@ -152,7 +222,10 @@ export async function generateSvgResponse(
       const width = widthAttr ? parseInt(widthAttr, 10) : svgEl.clientWidth;
       const height = heightAttr ? parseInt(heightAttr, 10) : svgEl.clientHeight;
 
-      const outerHTML = svgEl.outerHTML;
+      // Use XMLSerializer instead of outerHTML for potentially better serialization
+      const serializer = new XMLSerializer();
+      const outerHTML = serializer.serializeToString(svgEl);
+
       let viewBox = svgEl.getAttribute("viewBox"); // Prioritize existing attribute
 
       if (!viewBox) {
@@ -192,7 +265,7 @@ export async function generateSvgResponse(
       svgElementHandle as ElementHandle<SVGGraphicsElement>
     ).evaluate(evaluateSvgData);
 
-    // console.log("SVG Data:", svgData);
+    console.log("Raw SVG Outer HTML:", svgData.outerHTML); // Log the raw SVG
 
     if (!svgData.outerHTML) {
       console.error("Could not get outerHTML from the SVG element.");
@@ -202,6 +275,7 @@ export async function generateSvgResponse(
       );
     }
 
+    // --- Restore SVG modification block ---
     // Construct the final SVG string
     let finalSvgMarkup = svgData.outerHTML;
     const svgTagMatch = finalSvgMarkup.match(/<svg[^>]*>/);
@@ -235,17 +309,19 @@ export async function generateSvgResponse(
         svgTag = svgTag.replace("<svg", `<svg height="${heightToUse}"`); // Add if missing
       }
 
-      // 4. Add/Update viewBox attribute (using the robustly determined value)
-      // Note: ViewBox might need adjustment if width/height are forced, but
-      // keeping the original viewBox often works well for scaling.
-      // Advanced logic could recalculate viewBox if needed.
+      // 4. Add/Update viewBox attribute
+      // Always use the viewBox detected from the browser, as forcing it
+      // can break foreignObject rendering. The width/height attributes
+      // will handle the overall scaling/sizing.
+      const viewBoxToUse = svgData.viewBox;
+
       if (svgTag.includes(" viewBox=")) {
         svgTag = svgTag.replace(
           /viewBox="[^"]*"/,
-          `viewBox="${svgData.viewBox}"`
+          `viewBox="${viewBoxToUse}"` // Use the detected viewBox
         );
       } else {
-        svgTag = svgTag.replace("<svg", `<svg viewBox="${svgData.viewBox}"`); // Add if missing
+        svgTag = svgTag.replace("<svg", `<svg viewBox="${viewBoxToUse}"`); // Add the detected viewBox
       }
 
       // Replace the original tag
@@ -254,8 +330,9 @@ export async function generateSvgResponse(
       console.warn("Could not find opening <svg> tag to add attributes.");
       // Add a basic SVG wrapper as a last resort if needed? Unlikely necessary.
     }
+    // --- End of restored block ---
 
-    // Return the SVG markup
+    // Return the reconstructed SVG markup
     return new Response(finalSvgMarkup, {
       headers: { "Content-Type": "image/svg+xml" }, // Set Content-Type to SVG
     });
